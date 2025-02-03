@@ -10,11 +10,17 @@ import datetime
 import time
 from IPython.display import clear_output
 
-# Remove the get_demo_key function as it's no longer needed
+def get_api_key():
+    try:
+        with open('config.json') as f:
+            config = json.load(f)
+            return config['api_key']
+    except FileNotFoundError:
+        raise Exception("config.json file not found. Please create one with your API key.")
 
 use_demo = {
     "accept": "application/json",
-    "x-cg-demo-api-key": "CG-daTziMBfXSDTJEWxbGBZMvqR"
+    "x-cg-demo-api-key": get_api_key()
 }
 
 def get_response(endpoint, headers, params, URL):
