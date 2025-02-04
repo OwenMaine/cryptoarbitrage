@@ -8,7 +8,7 @@ import warnings
 import pytz
 import datetime
 import time
-from IPython.display import clear_output
+from IPython.display import clear_output, display
 
 def get_api_key():
     try:
@@ -85,16 +85,22 @@ def convert_to_local_tz(old_ts):
     return new_ts
 
 def get_trade_exchange_per_country(country, base_curr, target_curr):
-    df_all = df_ex_subset[df_ex_subset["country"] == country]    
+    """
+    Get trading data for a specific country and currency pair
+    target_curr should be 'USDT' for most exchanges
+    """
+    df_all = df_ex_subset[df_ex_subset["country"].str.contains(country, case=False, na=False)]
     
     if df_all.empty:
         print(f"No exchanges found for country: {country}")
+        print("Available countries:", df_ex_subset["country"].unique())
         return pd.DataFrame(columns=['exchange', 'last_price', 'last_vol', 'spread', 'trade_time'])
     
     exchanges_list = df_all["id"]
     ex_all = []    
     
     print(f"Found {len(exchanges_list)} exchanges in {country}")
+    print(f"Checking {base_curr}/{target_curr} pairs on exchanges:", exchanges_list.tolist())
        
     for exchange_id in exchanges_list:
         found_match = get_trade_exchange(exchange_id, base_curr, target_curr)
@@ -110,7 +116,7 @@ def get_trade_exchange_per_country(country, base_curr, target_curr):
                                 trade_time = convert_to_local_tz(found_match["last_traded_at"])
                                 )
                 ex_all.append(temp_dict)
-                print(f"Added data for exchange: {exchange_id}")
+                print(f"Added data for exchange: {exchange_id} - Price: {found_match['last']} {target_curr}")
             except KeyError as e:
                 print(f"Missing data in response for exchange {exchange_id}: {e}")
                 continue
@@ -119,23 +125,39 @@ def get_trade_exchange_per_country(country, base_curr, target_curr):
     df_result = pd.DataFrame(ex_all)
     if df_result.empty:
         print(f"No trading data found for {base_curr}/{target_curr} in {country}")
+        print("Try using USDT instead of USD as target currency")
         return pd.DataFrame(columns=['exchange', 'last_price', 'last_vol', 'spread', 'trade_time'])
     return df_result
 
 def get_exchange_rate(base_curr):
-    
-    # This returns current BTC to base_curr exchange rate    
+    """Get exchange rate with better handling of cryptocurrency symbols"""
     exchange_rate_response = get_response(f"/exchange_rates",
                                           use_demo,
                                           {},
                                           PUB_URL)
     rate = ""
     try:
+        # Try direct lookup first
         rate = exchange_rate_response["rates"][base_curr.lower()]["value"]
-    except KeyError as ke:
-        print("Currency not found in the exchange rate API response:", ke)
-        
-    return rate  
+    except KeyError:
+        try:
+            # For cryptocurrencies not in exchange rates, get price in USD
+            coin_params = {
+                "ids": base_curr.lower(),
+                "vs_currencies": "usd"
+            }
+            price_response = get_response("/simple/price",
+                                        use_demo,
+                                        coin_params,
+                                        PUB_URL)
+            if price_response and base_curr.lower() in price_response:
+                rate = price_response[base_curr.lower()]["usd"]
+            else:
+                print(f"Unable to find price data for {base_curr}")
+        except Exception as e:
+            print(f"Error getting price for {base_curr}: {str(e)}")
+    
+    return rate
 
 def get_vol_exchange(id, days, base_curr):
     
@@ -263,7 +285,7 @@ def run_bot(country,
             df_ex_all = df_ex_all.drop_duplicates()
             
             # Clear previous display once new one is available
-            clear_output(wait = True)
+            clear_output(wait=True)
             display_agg_per_exchange(df_ex_all, base_curr)
         else:
             print("No new data found in this iteration")
@@ -282,7 +304,60 @@ def get_top_coins():
     coins_response = get_response("/coins/markets", use_demo, coins_params, PUB_URL)
     return [(coin['symbol'].upper(), coin['name']) for coin in coins_response]
 
+def run_multi_bot(country, target_curr="USDT", num_coins=20):
+    """
+    Run arbitrage bot for multiple cryptocurrencies simultaneously
+    """
+    print(f"Starting multi-currency bot for top {num_coins} coins in {country}")
+    
+    # Get top coins
+    top_coins = get_top_coins()[:num_coins]
+    
+    # Initialize storage for all pairs
+    all_data = {}
+    
+    while True:
+        try:
+            clear_output(wait=True)
+            print(f"\nChecking prices at {datetime.datetime.now()}\n")
+            
+            # Check each coin
+            for base_symbol, coin_name in top_coins:
+                print(f"\nGetting data for {coin_name} ({base_symbol})")
+                df_new = get_trade_exchange_per_country(country, base_symbol, target_curr)
+                
+                if not df_new.empty:
+                    if base_symbol not in all_data:
+                        all_data[base_symbol] = df_new
+                    else:
+                        all_data[base_symbol] = pd.concat([all_data[base_symbol], df_new])
+                        all_data[base_symbol] = all_data[base_symbol].drop_duplicates()
+                    
+                    # Display current stats for this coin
+                    print(f"\n{base_symbol}/{target_curr} Stats:")
+                    display_agg_per_exchange(all_data[base_symbol], base_symbol)
+                
+            # Wait before next update
+            print("\nWaiting 60 seconds for next update...")
+            time.sleep(60)
+            
+        except KeyboardInterrupt:
+            print("\nStopping bot...")
+            break
+        except Exception as e:
+            print(f"Error occurred: {str(e)}")
+            continue
+    
+    return all_data
+
 if __name__ == "__main__":
+    # Ensure required dependencies are installed
+    try:
+        import jinja2
+    except ImportError:
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "jinja2"])
+
     # Get top 10 exchanges by volume
     print("Fetching top 10 exchanges...")
     top_exchanges = df_ex_subset.head(10)
@@ -303,21 +378,21 @@ if __name__ == "__main__":
         for base_symbol, base_name in top_coins[:10]:  # Start with top 10 coins for testing
             print(f"Checking {base_name} ({base_symbol}) pairs...")
             
-            # Check against USDT and BTC pairs
-            for target in ['USDT', 'BTC']:
-                try:
-                    trade_data = get_trade_exchange(exchange['id'], base_symbol, target)
-                    if trade_data:
-                        print(f"Found {base_symbol}/{target} pair!")
-                        exchange_data.append({
-                            'exchange': exchange['name'],
-                            'pair': f"{base_symbol}/{target}",
-                            'price': trade_data['last'],
-                            'volume': trade_data['volume'],
-                            'spread': trade_data['bid_ask_spread_percentage']
-                        })
-                except Exception as e:
-                    print(f"Error checking {base_symbol}/{target}: {str(e)}")
+            # Check against USDT pairs only
+            target = 'USDT'
+            try:
+                trade_data = get_trade_exchange(exchange['id'], base_symbol, target)
+                if trade_data:
+                    print(f"Found {base_symbol}/{target} pair!")
+                    exchange_data.append({
+                        'exchange': exchange['name'],
+                        'pair': f"{base_symbol}/{target}",
+                        'price': trade_data['last'],
+                        'volume': trade_data['volume'],
+                        'spread': trade_data['bid_ask_spread_percentage']
+                    })
+            except Exception as e:
+                print(f"Error checking {base_symbol}/{target}: {str(e)}")
 
     # Convert results to DataFrame and display
     if exchange_data:
@@ -330,8 +405,15 @@ if __name__ == "__main__":
     # Example of monitoring specific pairs
     print("\nStarting continuous monitoring for top exchanges...")
     try:
-        # Monitor US exchanges for BTC/USDT
-        run_bot("US", "BTC", "USDT")
+        # Monitor top 20 cryptocurrencies against USDT
+        data = run_multi_bot("United States", "USDT", 20)
+        
+        # Optional: Save final results
+        for symbol, df in data.items():
+            df.to_csv(f"arbitrage_data_{symbol}_USDT.csv", index=False)
+            
     except KeyboardInterrupt:
         print("\nMonitoring stopped by user")
+    except Exception as e:
+        print(f"Error occurred: {str(e)}")
 
