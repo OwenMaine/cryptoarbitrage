@@ -1,4 +1,3 @@
-
-{
-    "api_key": "CG-daTziMBfXSDTJEWxbGBZMvqR"
-}
+config.json
+*.pyc
+__pycache__/

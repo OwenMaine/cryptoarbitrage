@@ -33,6 +33,17 @@ def get_response(endpoint, headers, params, URL):
         print(f"Failed to fetch data, check status code {response.status_code}")
 
         # Valid values for results per page is between 1-250
+
+if __name__ == "__main__":
+    PUB_URL = "https://api.coingecko.com/api/v3"
+    exchange_params = {"per_page": 250, "page": 1}
+    
+    # Make API call and print response
+    print("Fetching exchange data...")
+    exchange_list_response = get_response("/exchanges", use_demo, exchange_params, PUB_URL)
+    if exchange_list_response:
+        print(f"Number of exchanges retrieved: {len(exchange_list_response)}")
+        print("First exchange data:", exchange_list_response[0])
 exchange_params = {
             "per_page": 250,
             "page": 1
