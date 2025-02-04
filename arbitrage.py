@@ -79,29 +79,42 @@ def convert_to_local_tz(old_ts):
     return new_ts
 
 def get_trade_exchange_per_country(country, base_curr, target_curr):
-    df_all = df_ex_subset[(df_all["country"] == country)]    
+    df_all = df_ex_subset[df_ex_subset["country"] == country]    
+    
+    if df_all.empty:
+        print(f"No exchanges found for country: {country}")
+        return pd.DataFrame(columns=['exchange', 'last_price', 'last_vol', 'spread', 'trade_time'])
     
     exchanges_list = df_all["id"]
     ex_all = []    
+    
+    print(f"Found {len(exchanges_list)} exchanges in {country}")
        
     for exchange_id in exchanges_list:
         found_match = get_trade_exchange(exchange_id, base_curr, target_curr)
         if found_match == "":
             continue
         else:
-            temp_dict = dict(
-                             exchange = exchange_id,
-                             last_price = found_match["last"],
-                             last_vol   = found_match["volume"],
-                             spread     = found_match["bid_ask_spread_percentage"],
-                             trade_time = convert_to_local_tz(found_match["last_traded_at"])
-                             )
-            ex_all.append(temp_dict)
+            try:
+                temp_dict = dict(
+                                exchange = exchange_id,
+                                last_price = found_match["last"],
+                                last_vol   = found_match["volume"],
+                                spread     = found_match["bid_ask_spread_percentage"],
+                                trade_time = convert_to_local_tz(found_match["last_traded_at"])
+                                )
+                ex_all.append(temp_dict)
+                print(f"Added data for exchange: {exchange_id}")
+            except KeyError as e:
+                print(f"Missing data in response for exchange {exchange_id}: {e}")
+                continue
     
     # Convert to DataFrame before returning
-    if ex_all:
-        return pd.DataFrame(ex_all)
-    return pd.DataFrame()  # Return empty DataFrame if no matches found
+    df_result = pd.DataFrame(ex_all)
+    if df_result.empty:
+        print(f"No trading data found for {base_curr}/{target_curr} in {country}")
+        return pd.DataFrame(columns=['exchange', 'last_price', 'last_vol', 'spread', 'trade_time'])
+    return df_result
 
 def get_exchange_rate(base_curr):
     
@@ -155,6 +168,14 @@ def get_vol_exchange(id, days, base_curr):
     return df_vol.sort_values(by = ["date"], ascending = False).reset_index(drop = True)
 
 def display_agg_per_exchange(df_ex_all, base_curr):
+    if df_ex_all.empty:
+        print("No data to display")
+        return None
+    
+    required_columns = ['exchange', 'last_price', 'last_vol', 'spread', 'trade_time']
+    if not all(col in df_ex_all.columns for col in required_columns):
+        print(f"Missing required columns. Available columns: {df_ex_all.columns.tolist()}")
+        return None
     
     # Group data and calculate statistics per exchange    
     df_agg = (
@@ -217,23 +238,29 @@ def highlight_max_min(x, color):
 def run_bot(country,
             base_curr,
             target_curr):
+    print(f"Starting bot for {country} - {base_curr}/{target_curr}")
     
     df_ex_all = get_trade_exchange_per_country(country, base_curr, target_curr)
+    if df_ex_all.empty:
+        print("No initial data found. Checking again in 60 seconds...")
     
     # Collect data every minute    
     while True:
         time.sleep(60)
         df_new = get_trade_exchange_per_country(country, base_curr, target_curr)
         
-        # Merge to existing DataFrame
-        df_ex_all = pd.concat([df_ex_all, df_new])
-        
-        # Remove duplicate rows based on all columns
-        df_ex_all = df_ex_all.drop_duplicates()
-        
-        # Clear previous display once new one is available
-        clear_output(wait = True)
-        display_agg_per_exchange(df_ex_all, base_curr)        
+        if not df_new.empty:
+            # Merge to existing DataFrame
+            df_ex_all = pd.concat([df_ex_all, df_new])
+            
+            # Remove duplicate rows based on all columns
+            df_ex_all = df_ex_all.drop_duplicates()
+            
+            # Clear previous display once new one is available
+            clear_output(wait = True)
+            display_agg_per_exchange(df_ex_all, base_curr)
+        else:
+            print("No new data found in this iteration")
         
     return None
 
