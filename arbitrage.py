@@ -25,12 +25,13 @@ use_demo = {
 
 def get_response(endpoint, headers, params, URL):
     url = "".join((URL, endpoint))
-    response = rq.get(url, headers = headers, params = params)
+    response = rq.get(url, headers=headers, params=params)
     if response.status_code == 200:
         data = response.json()
         return data
     else:
         print(f"Failed to fetch data, check status code {response.status_code}")
+        return None
 
         # Valid values for results per page is between 1-250
 
@@ -42,7 +43,10 @@ exchange_params = {
 
 PUB_URL = "https://api.coingecko.com/api/v3"
 exchange_list_response = get_response("/exchanges", use_demo, exchange_params, PUB_URL)
-df_ex = pd.DataFrame(exchange_list_response)
+if exchange_list_response:
+    df_ex = pd.DataFrame(exchange_list_response)
+else:
+    df_ex = pd.DataFrame()
 
 df_ex_subset = df_ex[["id", "name", "country", "trade_volume_24h_btc"]]
 df_ex_subset = df_ex_subset.sort_values(by = ["trade_volume_24h_btc"], ascending = False)
@@ -53,6 +57,8 @@ def get_trade_exchange(id, base_curr, target_curr):
                                             use_demo,
                                             {},
                                             PUB_URL)
+    if not exchange_ticker_response:
+        return ""
     
     found_match = ""
     
